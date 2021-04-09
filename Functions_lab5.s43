@@ -1,0 +1,159 @@
+#include  <msp430xG46x.h>
+
+Debounce     MACRO  cycles
+             LOCAL  L
+             mov.w  cycles,R15     
+L            dec.w  R15                     
+             jnz    L          
+             ENDM
+
+                MODULE    Function
+                PUBLIC    Shitleds,PWM_func,FreqCouner,PORT1_ISR,TB_ISR,TimerB_ISR
+                EXTERN    state,flag,PullUp,PullDown
+                RSEG      CODE
+                
+;=====================================================================            
+   
+Shitleds    mov     #16384,&TBCCR0
+            mov.w   #CCIE,&TBCCTL0
+            mov.w   #TBSSEL_1+MC_1,&TBCTL
+            mov     #1,&PBOUT
+            bis.w   #CPUOFF+GIE,SR
+            ret        
+;=====================================================================  
+PWM_func    
+
+SetupP2     bis.b   #0x04,&P2SEL               
+            bis.b   #0x0f,&P1IE
+            MOV.B &P1IN,R4
+            bic.b   #0xf0,R4
+            MOV     #0x50,R5
+            mov     R4,R6
+            CMP     #12,R4
+            JGE     Result
+            
+Mul         DEC     R5                         ;   now we multiply
+           
+            JZ      SetupC0
+            
+            ADD     R6,R4
+            
+            JMP     Mul
+
+Result      mov.w   #1048,R4                       ;   now R4 is the DutyCycle
+                              
+SetupC0     mov.w   #1048,&TBCCR0              ;   config TB0
+SetupC1    
+            mov.w   #OUTMOD_7,&TBCCTL1         ;   CCR1 reset/set
+           
+            mov.w   R4,&TBCCR1
+            
+            mov.w   #TBSSEL_2+MC_1,&TBCTL   ; SMCLK, upmode;   CCR1 PWM Duty Cycle
+           
+            bis.w   #CPUOFF+GIE,SR
+            ret
+
+;=====================================================================  
+FreqCouner  mov.b    #0x08,&P2SEL 
+            mov.w    #TBSSEL_1+MC_2,&TBCTL 
+            mov.w    #CM_1+SCS+CAP+CCIE,&TBCCTL2
+            bis.w   #CPUOFF+GIE,SR
+            ret                            
+;------------------------------------------------------------------------------------------ 
+TimerB_ISR
+            add.w &TBIV,PC              ; Add Timer_B offset vector 
+            reti
+            reti
+            jmp   ReadTBCCR2
+            reti 
+            reti 
+            reti 
+            reti 
+            reti 
+;------------------------------------------------------------------------------------------
+ReadTBCCR2  tst.b flag
+            jne   flag_1
+            mov.w &TBCCR2,R14
+            mov.w R14,R13
+            sub   R15,R13
+            mov  #32768,R10
+            CLR  R11            
+
+
+Div2        CMP  R13,R10
+            JLO  Result2
+            INC  R11
+            SUB  R13,R10          
+            JMP  Div2
+Result2   
+            mov R11,&PBOUT
+            xor.b #0x01,flag
+            reti
+            
+flag_1      mov.w &TBCCR2,R15
+            mov.w R15,R13
+            sub   R14,R13
+            mov  #32768,R10
+            CLR  R11            
+
+
+Div1        CMP  R13,R10                       
+            JLO  Result1                  
+            INC  R11         
+            SUB  R13,R10          
+            JMP  Div1
+Result1   
+            mov R11,&PBOUT
+            xor.b #0x01,flag
+            reti
+;------------------------------------------------------------------------------------------ 
+;               PORT1 Interrupt Service Routine  of SW1=P1.0
+;------------------------------------------------------------------------------------------
+TB_ISR       cmp     #0x8000,&PBOUT
+             jz      end_TB_0
+             RLA     &PBOUT
+             reti
+end_TB_0     MOV     #1,&PBOUT
+             reti   
+;-------------------------------------------------------------------------------------------
+PORT1_ISR    Debounce #PullUp
+
+             mov.w   #TBCLR,&TBCTL
+             bic.b   #0x0f,&P1IE            
+                          
+             
+             bit.b  #0x10,&P1IFG   ;check if P1.5 is pushed
+             jnz    P1_0 
+             bit.b  #0x20,&P1IFG   ;check if P1.6 is pushed
+             jnz    P1_1
+             bit.b  #0x40,&P1IFG   ;check if P1.7 is pushed
+             jnz    P1_2     
+             bit.b  #0x80,&P1IFG   ;check if P1.8 is pushed
+             jnz    P1_3              
+             reti        ; interrupt hapened from another source
+
+             bit.b  #0x01,&P1IFG   ;check if P1.5 is pushed
+             jnz    P1_1 
+             bit.b  #0x02,&P1IFG   ;check if P1.6 is pushed
+             jnz    P1_1
+             bit.b  #0x04,&P1IFG   ;check if P1.7 is pushed
+             jnz    P1_1     
+             bit.b  #0x08,&P1IFG   ;check if P1.8 is pushed
+             jnz    P1_1              
+             reti            
+             
+P1_0         mov    #0,state       ; rlLED
+             jmp    exitLPM0
+P1_1         mov    #1,state       ; rrLED
+             jmp    exitLPM0        
+P1_2         mov    #2,state       ; rlLED
+             jmp    exitLPM0
+P1_3         mov    #3,state       ; rrLED
+             jmp    exitLPM0    
+             
+exitLPM0     bic    #CPUOFF,0(SP)  ; WAKES THE CPU , 
+             bic.b  #0xff,&P1IFG  
+             reti
+                ENDMOD
+;=============================================================            
+                END

@@ -1,0 +1,98 @@
+#include  <msp430xG46x.h>
+
+;-------------------------------------------------------------------------------
+            ORG     0x1100                  ; Begins a RAM segment
+;-------------------------------------------------------------------------------
+state       DW   3    ;initiel to state 3
+PullUp      EQU  280  ;wait of 0.8msec = (3op*280)/2^20
+PullDown    EQU  70   ;wait of 0.2msec = (3op*70)/2^20
+flag         DB      0    
+;-------------------------------------------------------------------------------
+            RSEG    CSTACK                  ; Begins a relocatable segment name of CSTACK - Define stack segment
+;-------------------------------------------------------------------------------
+            RSEG    CODE                    ; Assemble to Flash memory -like void main in C
+;-----------------------------------------------------------------------------
+           NAME    Main
+           PUBLIC  Main,state,flag,PullUp,PullDown
+           EXTERN Shitleds,PWM_func,FreqCouner,PORT1_ISR,TB_ISR,TimerB_ISR
+           
+Main         mov.w   #SFE(CSTACK),SP          ; Initialize stack pointer
+StopWDT      mov.w   #WDTPW+WDTHOLD,&WDTCTL 
+
+;----------------
+SetupFLL    bis.b   #XCAP14PF,&FLL_CTL0     ; Configure load caps
+OFIFGcheck  bic.b   #OFIFG,&IFG1            ; Clear OFIFG
+            mov.w   #047FFh,R15             ; Wait for OFIFG to set again if
+OFIFGwait   dec.w   R15                     ; not stable yet
+            jnz     OFIFGwait
+            bit.b   #OFIFG,&IFG1            ; Has it set again?
+            jnz     OFIFGcheck              ; If so, wait some more
+;------------------
+
+
+SetupBT     mov.b   #BTDIV+BTHOLD+BT_fCLK2_DIV16,&BTCTL  ; ACLK/(256*16)
+            clr.b   &BTCNT1
+            clr.b   &BTCNT2
+            bic.b   #BTIE,&IE2 
+
+
+SetupTB     mov.w   #TBCLR,&TBCTL
+            
+
+SetupPB      bis     #0xffff,&PBDIR            ; P9.0-P9.7 output = #0xff -->M(P9DIR) 
+             clr     &PBOUT
+
+SetupP1      bic.b   #0xff,&P1SEL
+             bic.b   #0xff,&P1DIR
+             bis.b   #0x3f,&P1IES
+             bic.b   #0xc0,&P1IES
+             bis.b   #0xf0,&P1IE
+             bic.b   #0x0f,&P1IE
+             bic.b   #0xf0,&P1IFG                ; reset of interrupt flag
+                         
+
+SetupP2      bis.b     #0x04,&P2DIR            ; P9.0-P9.7 output = #0xff -->M(P9DIR) 
+             bic.b     #0x08,&P2DIR
+             clr.b       &P2OUT
+             
+             
+;----------- FSM_loop -------------------------------------
+
+state0       cmp     #0,state         ;check if state0 : __bin counter__      
+             jnz     state1
+             call    #Shitleds
+
+
+
+state1       cmp     #1,state         ;check if state1 : __leds on from right to left for 5 cycle__ 
+             jnz     state2  
+             call    #PWM_func
+
+            
+state2       cmp     #2,state         ;check if state2 : __leds on from right to left until all leds are on__ 
+             jnz     state3  
+             call    #FreqCouner           
+
+           
+             
+state3       cmp     #3,state         ;check if state3 : __sleep mode__
+             jnz     state0
+             clr   &PBOUT
+             bis.w   #CPUOFF+GIE,SR                               
+             jmp     state0
+
+
+                        
+;-------------------------------------------------------------------------------------------------------------------------------------------
+            COMMON  INTVEC                  ; Interrupt Vectors-Begins a common segment with name of INTVEC 
+;-------------------------------------------------------------------------------------------------------------------------------------------
+
+            ORG     PORT1_VECTOR            ;PORT2 Interrupt Vector
+            DW      PORT1_ISR
+            ORG     RESET_VECTOR            ; MSP430 RESET Vector
+            DW      Main                   
+            ORG     TIMERB0_VECTOR        ; MSP430 Basic Timer Interrupt Vector
+            DW      TB_ISR 
+            ORG     TIMERB1_VECTOR         ; MSP430 TIMERB1 Interrupt Vector
+            DW      TimerB_ISR    
+            END
